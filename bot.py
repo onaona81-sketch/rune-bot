@@ -8,7 +8,7 @@ from aiogram.utils import executor
 
 # === ТВОИ ДАННЫЕ ===
 API_TOKEN = os.getenv("BOT_TOKEN") or "8260960372:AAFMrTN7DUrYhD_E-D1hF1l5ZTPuu679zP8"
-CHANNEL   = os.getenv("CHANNEL")   or "@slavicruna_channel"   # можно и -100... (ID канала)
+CHANNEL   = os.getenv("CHANNEL")   or "@slavicruna"   # можно и -100... (ID канала)
 ADMIN_ID  = int(os.getenv("ADMIN_ID") or 8218520444)          # твой цифровой Telegram ID
 # ====================
 
