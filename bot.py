@@ -7,7 +7,8 @@ from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.utils import executor
 
 # === ТВОИ ДАННЫЕ ===
-API_TOKEN = os.getenv("BOT_TOKEN") or "8260960372:AAFMrTN7DUrYhD_E-D1hF1l5ZTPuu679zP8"
+API_TOKEN = "8260960372:AAHmU3TNORYb4UaxrGQxLjCFsLFursPIRco"
+
 CHANNEL   = os.getenv("CHANNEL")   or "@slavicruna"   # можно и -100... (ID канала)
 ADMIN_ID  = int(os.getenv("ADMIN_ID") or 8218520444)          # твой цифровой Telegram ID
 # ====================
