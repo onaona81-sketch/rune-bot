@@ -1,24 +1,24 @@
-# bot.py — простой бот «подписка → дата → имя → подтверждение»
+# bot.py — подписка → дата → имя → уведомление админа → ответ админа пользователю
 import os
+import re
 import logging
 from aiogram import Bot, Dispatcher, types
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.utils import executor
 
-# === ВАЖНО: ЗАПОЛНИ ЭТИ ДВЕ СТРОКИ ===
-API_TOKEN = "8260960372:AAFMrTN7DUrYhD_E-D1hF1l5ZTPuu679zP8"   # пример: "1234567890:AA..."; можно хранить в переменной BOT_TOKEN
-CHANNEL   = "@slavicruna"               # можно @username ИЛИ числовой ID вида -1002552649165
-# =====================================
-
-# Если хочешь брать токен из переменной окружения на Render — раскомментируй:
-# API_TOKEN = os.getenv("BOT_TOKEN") or API_TOKEN
+# === ТВОИ ДАННЫЕ ===
+API_TOKEN = os.getenv("BOT_TOKEN") or "8260960372:AAFMrTN7DUrYhD_E-D1hF1l5ZTPuu679zP8"
+CHANNEL   = os.getenv("CHANNEL")   or "@slavicruna_channel"   # можно и -100... (ID канала)
+ADMIN_ID  = int(os.getenv("ADMIN_ID") or 8218520444)          # твой цифровой Telegram ID
+# ====================
 
 logging.basicConfig(level=logging.INFO)
 bot = Bot(token=API_TOKEN, parse_mode=types.ParseMode.HTML)
 dp  = Dispatcher(bot)
 
-# Память шагов на время работы процесса
-user_state = {}   # user_id -> "waiting_date" | {"date": "...", "step": "waiting_name"} | ...
+# простая "память" состояний в RAM
+user_state = {}     # user_id -> "waiting_date" | {"date": "...", "step": "waiting_name", "name": "..."}
+admin_state = {}    # ADMIN_ID -> {"reply_to": user_id}
 
 def gate_kb() -> InlineKeyboardMarkup:
     kb = InlineKeyboardMarkup(row_width=1)
@@ -33,11 +33,17 @@ def confirm_kb() -> InlineKeyboardMarkup:
         InlineKeyboardButton("Данные верны", callback_data="confirm_data")
     )
 
+def admin_reply_kb(user_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup().add(
+        InlineKeyboardButton("Ответить", callback_data=f"admin_reply:{user_id}"),
+        InlineKeyboardButton("Открыть чат", url=f"tg://user?id={user_id}")
+    )
+
 @dp.message_handler(commands=["start"])
 async def start_cmd(message: types.Message):
     await message.answer(
         "Привет! 🌿 Чтобы получить руну, подпишитесь на наш канал:\n"
-        f"{'@'+CHANNEL.lstrip('@')}\n\n"
+        f"{'@' + CHANNEL.lstrip('@')}\n\n"
         "После подписки нажмите кнопку 👇 «Подписался».",
         reply_markup=gate_kb()
     )
@@ -50,7 +56,7 @@ async def check_sub(call: types.CallbackQuery):
         if member.status in ("member", "administrator", "creator"):
             user_state[uid] = "waiting_date"
             try:
-                await call.message.edit_reply_markup()  # уберём кнопки под старым сообщением
+                await call.message.edit_reply_markup()  # убираем старые кнопки
             except Exception:
                 pass
             await bot.send_message(uid, "Введите вашу дату рождения (например: 05.11.1992) ⤵️")
@@ -64,8 +70,6 @@ async def check_sub(call: types.CallbackQuery):
 async def get_date(message: types.Message):
     uid = message.from_user.id
     date_text = (message.text or "").strip()
-    # Мини-валидация: ДД.ММ.ГГГГ
-    import re
     if not re.fullmatch(r"(0?[1-9]|[12]\d|3[01])\.(0?[1-9]|1[0-2])\.(19\d{2}|20\d{2})", date_text):
         await message.answer("Формат даты: <b>ДД.ММ.ГГГГ</b> (например: 05.11.1992).")
         return
@@ -84,10 +88,10 @@ async def get_name(message: types.Message):
     data["step"] = "confirm"
     user_state[uid] = data
     await message.answer(
-        f"Проверьте данные:\n"
+        "Проверьте данные:\n"
         f"📅 Дата: <b>{data['date']}</b>\n"
         f"👤 Имя: <b>{data['name']}</b>\n\n"
-        f"Если всё верно — нажмите кнопку ниже 👇",
+        "Если всё верно — нажмите кнопку ниже 👇",
         reply_markup=confirm_kb()
     )
 
@@ -98,18 +102,63 @@ async def confirm_data(call: types.CallbackQuery):
     if data.get("step") != "confirm":
         await call.answer("Нет данных для подтверждения. Нажмите /start", show_alert=True)
         return
+
     try:
         await call.message.edit_reply_markup()
     except Exception:
         pass
-    # Здесь ты вручную потом отвечаешь пользователю (как ты и хотела)
+
+    # Сообщение пользователю
     await bot.send_message(
         uid,
         "Спасибо 🌿 Мы приняли вашу дату рождения и имя.\n"
         "Так как всё обрабатывается вручную, нужно немного подождать 🙌"
     )
-    # почистим состояние
+
+    # Уведомление админу
+    if ADMIN_ID:
+        u = call.from_user
+        text = (
+            "🆕 <b>Новая заявка</b>\n"
+            f"👤 Пользователь: <b>{u.full_name}</b> (@{u.username})\n"
+            f"🆔 ID: <code>{uid}</code>\n"
+            f"📅 Дата: <b>{data['date']}</b>\n"
+            f"📛 Имя: <b>{data['name']}</b>"
+        )
+        try:
+            await bot.send_message(ADMIN_ID, text, reply_markup=admin_reply_kb(uid))
+        except Exception as e:
+            logging.warning(f"Cannot send to admin: {e}")
+
     user_state.pop(uid, None)
+
+# ===== Ответ админа пользователю =====
+@dp.callback_query_handler(lambda c: c.data.startswith("admin_reply:"))
+async def admin_reply_start(call: types.CallbackQuery):
+    if call.from_user.id != ADMIN_ID:
+        await call.answer("Нет прав.", show_alert=True)
+        return
+    target_id = int(call.data.split(":")[1])
+    admin_state[ADMIN_ID] = {"reply_to": target_id}
+    try:
+        await call.message.edit_reply_markup()
+    except Exception:
+        pass
+    await bot.send_message(ADMIN_ID, f"Напишите ответ для пользователя ID <code>{target_id}</code> (одно сообщение).")
+
+@dp.message_handler(lambda m: m.from_user.id == ADMIN_ID and ADMIN_ID in admin_state)
+async def admin_send_reply(message: types.Message):
+    target = admin_state.get(ADMIN_ID, {}).get("reply_to")
+    if not target:
+        return
+    text = message.text or ""
+    try:
+        await bot.send_message(target, f"Сообщение от администратора:\n\n{text}")
+        await message.answer("✅ Отправлено.")
+    except Exception as e:
+        await message.answer(f"❌ Не удалось отправить: {e}")
+    finally:
+        admin_state.pop(ADMIN_ID, None)
 
 if __name__ == "__main__":
     executor.start_polling(dp, skip_updates=True)
