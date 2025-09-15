@@ -1,4 +1,4 @@
-# bot.py — подписка → дата → имя → уведомление админа → ответ админа пользователю
+# bot.py — подписка → дата → имя → уведомление админа → удобные ответы админа (много сообщений + медиа)
 import os
 import re
 import logging
@@ -98,6 +98,7 @@ async def check_sub(call: types.CallbackQuery):
 async def get_date(message: types.Message):
     uid = message.from_user.id
     date_text = (message.text or "").strip()
+    # строгая проверка оставлена, т.к. у тебя «с этим пока всё хорошо»
     if not re.fullmatch(r"(0?[1-9]|[12]\d|3[01])\.(0?[1-9]|1[0-2])\.(19\d{2}|20\d{2})", date_text):
         await message.answer("Формат даты: <b>ДД.ММ.ГГГГ</b> (например: 05.11.1992).")
         return
@@ -158,6 +159,9 @@ async def confirm_data(call: types.CallbackQuery):
 
     user_state.pop(uid, None)
 
+# ===== УДОБНЫЕ ОТВЕТЫ АДМИНА: сессия (много сообщений) + быстрые команды =====
+
+# Нажимаешь "Ответить" → включаем режим. Все следующие твои сообщения (любого типа) будут уходить этому юзеру, пока не напишешь /done или /cancel.
 @dp.callback_query_handler(lambda c: c.data.startswith("admin_reply:"))
 async def admin_reply_start(call: types.CallbackQuery):
     if call.from_user.id != ADMIN_ID:
@@ -169,21 +173,72 @@ async def admin_reply_start(call: types.CallbackQuery):
         await call.message.edit_reply_markup()
     except Exception:
         pass
-    await bot.send_message(ADMIN_ID, f"Напишите ответ для пользователя ID <code>{target_id}</code> (одно сообщение).")
+    await bot.send_message(
+        ADMIN_ID,
+        (f"🔁 Режим ответа включён для ID <code>{target_id}</code>.\n"
+         f"Отправляй СООБЩЕНИЯ (текст/фото/видео/док/голос/стикер) — я буду пересылать их пользователю.\n"
+         f"Когда закончишь — напиши /done (или /cancel), чтобы выйти из режима.")
+    )
 
-@dp.message_handler(lambda m: m.from_user.id == ADMIN_ID and ADMIN_ID in admin_state)
+# Пока режим включен — КАЖДОЕ твое сообщение копируем «как есть» пользователю (до /done)
+@dp.message_handler(lambda m: m.from_user.id == ADMIN_ID and ADMIN_ID in admin_state and not (m.text and (m.text.startswith("/done") or m.text.startswith("/cancel") or m.text.startswith("/reply") or m.text.startswith("/to"))))
 async def admin_send_reply(message: types.Message):
     target = admin_state.get(ADMIN_ID, {}).get("reply_to")
     if not target:
         return
-    text = message.text or ""
     try:
-        await bot.send_message(target, f"Сообщение от администратора:\n\n{text}")
-        await message.answer("✅ Отправлено.")
+        await bot.copy_message(
+            chat_id=target,
+            from_chat_id=message.chat.id,
+            message_id=message.message_id
+        )
+        await message.answer("✅ Отправлено пользователю.")
     except Exception as e:
         await message.answer(f"❌ Не удалось отправить: {e}")
-    finally:
-        admin_state.pop(ADMIN_ID, None)
+
+# Завершить сессию ответа
+@dp.message_handler(lambda m: m.from_user.id == ADMIN_ID and m.text and (m.text.startswith("/done") or m.text.startswith("/cancel")))
+async def admin_finish_reply(message: types.Message):
+    admin_state.pop(ADMIN_ID, None)
+    await message.answer("🚫 Режим ответа выключен.")
+
+# Быстрый разовый ответ текстом: /reply <user_id> <текст>
+@dp.message_handler(lambda m: m.from_user.id == ADMIN_ID and m.text and m.text.startswith("/reply"))
+async def admin_direct_reply(message: types.Message):
+    parts = message.text.split(maxsplit=2)
+    if len(parts) < 3:
+        await message.answer("Формат: /reply <user_id> <текст>")
+        return
+    try:
+        target_id = int(parts[1])
+    except ValueError:
+        await message.answer("user_id должен быть числом.")
+        return
+    text = parts[2]
+    try:
+        await bot.send_message(target_id, f"Сообщение от администратора:\n\n{text}")
+        await message.answer("✅ Отправлено пользователю.")
+    except Exception as e:
+        await message.answer(f"❌ Ошибка при отправке: {e}")
+
+# Альтернатива: вручную выбрать адресата и войти в режим (как будто нажала «Ответить»)
+@dp.message_handler(lambda m: m.from_user.id == ADMIN_ID and m.text and m.text.startswith("/to"))
+async def admin_set_target(message: types.Message):
+    parts = message.text.split(maxsplit=1)
+    if len(parts) < 2:
+        await message.answer("Формат: /to <user_id>")
+        return
+    try:
+        target_id = int(parts[1])
+    except ValueError:
+        await message.answer("user_id должен быть числом.")
+        return
+    admin_state[ADMIN_ID] = {"reply_to": target_id}
+    await message.answer(
+        f"🔁 Режим ответа включён для ID <code>{target_id}</code>.\n"
+        f"Отправляй сообщения (любой тип) — я буду пересылать их пользователю.\n"
+        f"Завершить — /done"
+    )
 
 if __name__ == "__main__":
     # Flask в отдельном потоке
