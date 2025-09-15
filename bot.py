@@ -2,24 +2,51 @@
 import os
 import re
 import logging
+import threading
+import time
+import requests
+from flask import Flask
 from aiogram import Bot, Dispatcher, types
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.utils import executor
 
 # === ТВОИ ДАННЫЕ ===
 API_TOKEN = "8260960372:AAHmU3TNORYb4UaxrGQxLjCFsLFursPIRco"
-
-CHANNEL   = os.getenv("CHANNEL")   or "@slavicruna"   # можно и -100... (ID канала)
-ADMIN_ID  = int(os.getenv("ADMIN_ID") or 8218520444)          # твой цифровой Telegram ID
+CHANNEL   = os.getenv("CHANNEL")   or "@slavicruna"       # можно и -100... (ID канала)
+ADMIN_ID  = int(os.getenv("ADMIN_ID") or 8218520444)      # твой цифровой Telegram ID
 # ====================
 
 logging.basicConfig(level=logging.INFO)
 bot = Bot(token=API_TOKEN, parse_mode=types.ParseMode.HTML)
 dp  = Dispatcher(bot)
 
-# простая "память" состояний в RAM
-user_state = {}     # user_id -> "waiting_date" | {"date": "...", "step": "waiting_name", "name": "..."}
+# Память состояний
+user_state = {}     # user_id -> состояния
 admin_state = {}    # ADMIN_ID -> {"reply_to": user_id}
+
+# ==== Flask-сервер для Render ====
+app = Flask(__name__)
+
+@app.route("/")
+def home():
+    return "Bot is alive!"
+
+def run_flask():
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port)
+# =================================
+
+# ==== Будильник (самопинг) ====
+def keep_awake():
+    url = os.environ.get("RENDER_EXTERNAL_URL") or "http://localhost:5000"
+    while True:
+        try:
+            requests.get(url, timeout=10)
+            logging.info("Pinged self to stay awake.")
+        except Exception as e:
+            logging.warning(f"Ping failed: {e}")
+        time.sleep(600)  # каждые 10 минут
+# ==============================
 
 def gate_kb() -> InlineKeyboardMarkup:
     kb = InlineKeyboardMarkup(row_width=1)
@@ -57,7 +84,7 @@ async def check_sub(call: types.CallbackQuery):
         if member.status in ("member", "administrator", "creator"):
             user_state[uid] = "waiting_date"
             try:
-                await call.message.edit_reply_markup()  # убираем старые кнопки
+                await call.message.edit_reply_markup()
             except Exception:
                 pass
             await bot.send_message(uid, "Введите вашу дату рождения (например: 05.11.1992) ⤵️")
@@ -109,14 +136,12 @@ async def confirm_data(call: types.CallbackQuery):
     except Exception:
         pass
 
-    # Сообщение пользователю
     await bot.send_message(
         uid,
         "Спасибо 🌿 Мы приняли вашу дату рождения и имя.\n"
         "Так как всё обрабатывается вручную, нужно немного подождать 🙌"
     )
 
-    # Уведомление админу
     if ADMIN_ID:
         u = call.from_user
         text = (
@@ -133,7 +158,6 @@ async def confirm_data(call: types.CallbackQuery):
 
     user_state.pop(uid, None)
 
-# ===== Ответ админа пользователю =====
 @dp.callback_query_handler(lambda c: c.data.startswith("admin_reply:"))
 async def admin_reply_start(call: types.CallbackQuery):
     if call.from_user.id != ADMIN_ID:
@@ -162,4 +186,10 @@ async def admin_send_reply(message: types.Message):
         admin_state.pop(ADMIN_ID, None)
 
 if __name__ == "__main__":
+    # Flask в отдельном потоке
+    threading.Thread(target=run_flask, daemon=True).start()
+    # Будильник в отдельном потоке
+    threading.Thread(target=keep_awake, daemon=True).start()
+    # Бот
     executor.start_polling(dp, skip_updates=True)
+
