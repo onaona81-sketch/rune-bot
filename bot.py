@@ -23,8 +23,8 @@ bot = Bot(token=API_TOKEN, parse_mode=types.ParseMode.HTML)
 dp  = Dispatcher(bot)
 
 # Память состояний
-user_state: dict[int, dict | str] = {}   # user_id -> состояния
-admin_state: dict[int, dict] = {}        # ADMIN_ID -> {"reply_to": user_id}
+user_state = {}     # user_id -> "waiting_date" | {"date": "...", "step": "waiting_name", "name": "..."}
+admin_state = {}    # ADMIN_ID -> {"reply_to": user_id}
 
 # ==== Мини-веб для Render (проверка живости) ====
 app = Flask(__name__)
@@ -183,15 +183,15 @@ async def admin_reply_start(call: types.CallbackQuery):
 
 # ЛОВИМ ЛЮБОЙ ТИП КОНТЕНТА в режиме ответа и копируем как есть (медиа + подпись)
 @dp.message_handler(
-    content_types=types.ContentTypes.ANY,
-    func=lambda m: (
+    lambda m: (
         m.from_user.id == ADMIN_ID
         and ADMIN_ID in admin_state
         and not (m.text and (m.text.startswith("/done")
                              or m.text.startswith("/cancel")
                              or m.text.startswith("/reply")
                              or m.text.startswith("/to")))
-    )
+    ),
+    content_types=types.ContentTypes.ANY
 )
 async def admin_send_reply(message: types.Message):
     target = admin_state.get(ADMIN_ID, {}).get("reply_to")
@@ -253,3 +253,4 @@ if __name__ == "__main__":
     threading.Thread(target=run_flask, daemon=True).start()
     threading.Thread(target=keep_awake, daemon=True).start()
     executor.start_polling(dp, skip_updates=True)
+
