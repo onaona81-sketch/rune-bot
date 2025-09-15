@@ -17,6 +17,8 @@ ADMIN_ID  = int(os.getenv("ADMIN_ID") or 8218520444)       # твой цифро
 # ====================
 
 logging.basicConfig(level=logging.INFO)
+log = logging.getLogger(__name__)
+
 bot = Bot(token=API_TOKEN, parse_mode=types.ParseMode.HTML)
 dp  = Dispatcher(bot)
 
@@ -42,9 +44,9 @@ def keep_awake():
     while True:
         try:
             requests.get(url, timeout=10)
-            logging.info("Pinged self to stay awake.")
+            log.info("Pinged self to stay awake.")
         except Exception as e:
-            logging.warning(f"Ping failed: {e}")
+            log.warning(f"Ping failed: {e}")
         time.sleep(600)  # 10 минут
 # ============================================
 
@@ -91,7 +93,7 @@ async def check_sub(call: types.CallbackQuery):
         else:
             await call.answer("Похоже, подписки ещё нет 🙈", show_alert=True)
     except Exception as e:
-        logging.warning(f"get_chat_member error: {e}")
+        log.warning(f"get_chat_member error: {e}")
         await call.answer("Не удалось проверить подписку, попробуйте ещё раз.", show_alert=True)
 
 @dp.message_handler(lambda m: user_state.get(m.from_user.id) == "waiting_date")
@@ -155,7 +157,7 @@ async def confirm_data(call: types.CallbackQuery):
         try:
             await bot.send_message(ADMIN_ID, text, reply_markup=admin_reply_kb(uid))
         except Exception as e:
-            logging.warning(f"Cannot send to admin: {e}")
+            log.warning(f"Cannot send to admin: {e}")
 
     user_state.pop(uid, None)
 
@@ -174,25 +176,21 @@ async def admin_reply_start(call: types.CallbackQuery):
         pass
     await bot.send_message(
         ADMIN_ID,
-        "🔁 Режим ответа включён для ID <code>{}</code>.\n"
-        "Отправляй СООБЩЕНИЯ (текст/фото/видео/док/голос/стикер) — я буду пересылать их пользователю.\n"
-        "Когда закончишь — напиши /done (или /cancel), чтобы выйти из режима.".format(target_id)
+        f"🔁 Режим ответа включён для ID <code>{target_id}</code>.\n"
+        f"Отправляй СООБЩЕНИЯ (текст/фото/видео/док/голос/стикер) — я буду пересылать их пользователю.\n"
+        f"Когда закончишь — напиши /done (или /cancel), чтобы выйти из режима."
     )
 
-# ✅ ФИКС: разрешаем ЛЮБОЙ тип контента в режиме ответа (раньше ловился только текст)
+# ЛОВИМ ЛЮБОЙ ТИП КОНТЕНТА в режиме ответа и копируем как есть (медиа + подпись)
 @dp.message_handler(
     content_types=types.ContentTypes.ANY,
     func=lambda m: (
         m.from_user.id == ADMIN_ID
         and ADMIN_ID in admin_state
-        and not (
-            m.text and (
-                m.text.startswith("/done")
-                or m.text.startswith("/cancel")
-                or m.text.startswith("/reply")
-                or m.text.startswith("/to")
-            )
-        )
+        and not (m.text and (m.text.startswith("/done")
+                             or m.text.startswith("/cancel")
+                             or m.text.startswith("/reply")
+                             or m.text.startswith("/to")))
     )
 )
 async def admin_send_reply(message: types.Message):
@@ -200,7 +198,6 @@ async def admin_send_reply(message: types.Message):
     if not target:
         return
     try:
-        # copy_message сохраняет и сам медиа-файл, и подпись (если была)
         await bot.copy_message(
             chat_id=target,
             from_chat_id=message.chat.id,
@@ -246,9 +243,9 @@ async def admin_set_target(message: types.Message):
         return
     admin_state[ADMIN_ID] = {"reply_to": target_id}
     await message.answer(
-        "🔁 Режим ответа включён для ID <code>{}</code>.\n"
-        "Отправляй сообщения (любой тип) — я буду пересылать их пользователю.\n"
-        "Завершить — /done".format(target_id)
+        f"🔁 Режим ответа включён для ID <code>{target_id}</code>.\n"
+        f"Отправляй сообщения (любой тип) — я буду пересылать их пользователю.\n"
+        f"Завершить — /done"
     )
 
 if __name__ == "__main__":
@@ -256,4 +253,3 @@ if __name__ == "__main__":
     threading.Thread(target=run_flask, daemon=True).start()
     threading.Thread(target=keep_awake, daemon=True).start()
     executor.start_polling(dp, skip_updates=True)
-ue)
