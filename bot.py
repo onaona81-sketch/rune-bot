@@ -179,17 +179,28 @@ async def admin_reply_start(call: types.CallbackQuery):
         "Когда закончишь — напиши /done (или /cancel), чтобы выйти из режима.".format(target_id)
     )
 
-@dp.message_handler(lambda m: m.from_user.id == ADMIN_ID
-                    and ADMIN_ID in admin_state
-                    and not (m.text and (m.text.startswith("/done")
-                                         or m.text.startswith("/cancel")
-                                         or m.text.startswith("/reply")
-                                         or m.text.startswith("/to"))))
+# ✅ ФИКС: разрешаем ЛЮБОЙ тип контента в режиме ответа (раньше ловился только текст)
+@dp.message_handler(
+    content_types=types.ContentTypes.ANY,
+    func=lambda m: (
+        m.from_user.id == ADMIN_ID
+        and ADMIN_ID in admin_state
+        and not (
+            m.text and (
+                m.text.startswith("/done")
+                or m.text.startswith("/cancel")
+                or m.text.startswith("/reply")
+                or m.text.startswith("/to")
+            )
+        )
+    )
+)
 async def admin_send_reply(message: types.Message):
     target = admin_state.get(ADMIN_ID, {}).get("reply_to")
     if not target:
         return
     try:
+        # copy_message сохраняет и сам медиа-файл, и подпись (если была)
         await bot.copy_message(
             chat_id=target,
             from_chat_id=message.chat.id,
@@ -245,3 +256,4 @@ if __name__ == "__main__":
     threading.Thread(target=run_flask, daemon=True).start()
     threading.Thread(target=keep_awake, daemon=True).start()
     executor.start_polling(dp, skip_updates=True)
+ue)
