@@ -5,42 +5,35 @@ import logging
 import threading
 import time
 import requests
-from flask import Flask
 from aiogram import Bot, Dispatcher, types
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.utils import executor
 
-# === ТВОИ ДАННЫЕ ===
-API_TOKEN = "8260960372:AAHmU3TNORYb4UaxrGQxLjCFsLFursPIRco"
-CHANNEL   = os.getenv("CHANNEL") or "@slavicruna"          # можно и -100... (ID канала)
-ADMIN_ID  = int(os.getenv("ADMIN_ID") or 8218520444)       # твой цифровой Telegram ID
-# ====================
+# === НАСТРОЙКИ ===
+API_TOKEN = os.getenv("BOT_TOKEN")               # ❗ добавь BOT_TOKEN в Render → Environment
+CHANNEL   = os.getenv("CHANNEL") or "@slavicruna"  # можно и числовой ID вида -100...
+ADMIN_ID  = int(os.getenv("ADMIN_ID") or 8218520444)
+# ==================
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger(__name__)
 
+if not API_TOKEN:
+    raise RuntimeError("Переменная окружения BOT_TOKEN не задана!")
+
 bot = Bot(token=API_TOKEN, parse_mode=types.ParseMode.HTML)
 dp  = Dispatcher(bot)
 
-# Память состояний
-user_state = {}     # user_id -> "waiting_date" | {"date": "...", "step": "waiting_name", "name": "..."}
-admin_state = {}    # ADMIN_ID -> {"reply_to": user_id}
+# Память состояний (в RAM процесса)
+user_state = {}   # user_id -> "waiting_date" | {"date": "...", "step": "waiting_name", "name": "..."}
+admin_state = {}  # ADMIN_ID -> {"reply_to": user_id}
 
-# ==== Мини-веб для Render (проверка живости) ====
-app = Flask(__name__)
-
-@app.route("/")
-def home():
-    return "Bot is alive!"
-
-def run_flask():
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port)
-# ===============================================
-
-# ==== Будильник (самопинг каждые 10 мин) ====
+# ---- Будильник: пингуем внешний URL (если задан) раз в 10 минут ----
 def keep_awake():
-    url = os.environ.get("RENDER_EXTERNAL_URL") or "http://localhost:5000"
+    url = os.environ.get("RENDER_EXTERNAL_URL")  # Render задаёт это для Web Service
+    if not url:
+        log.info("RENDER_EXTERNAL_URL не задан — будильник пропускаем.")
+        return
     while True:
         try:
             requests.get(url, timeout=10)
@@ -48,7 +41,7 @@ def keep_awake():
         except Exception as e:
             log.warning(f"Ping failed: {e}")
         time.sleep(600)  # 10 минут
-# ============================================
+# --------------------------------------------------------------------
 
 def gate_kb() -> InlineKeyboardMarkup:
     kb = InlineKeyboardMarkup(row_width=1)
@@ -116,7 +109,7 @@ async def get_name(message: types.Message):
         return
     data = user_state.get(uid, {})
     data["name"] = name
-    data["step"] = "confirm"
+    data["step"]  = "confirm"
     user_state[uid] = data
     await message.answer(
         "Проверьте данные:\n"
@@ -161,7 +154,7 @@ async def confirm_data(call: types.CallbackQuery):
 
     user_state.pop(uid, None)
 
-# ===== УДОБНЫЕ ОТВЕТЫ АДМИНА: сессия (много сообщений) + быстрые команды =====
+# ===== РЕЖИМ ОТВЕТА АДМИНА (пересылка любого контента) =====
 
 @dp.callback_query_handler(lambda c: c.data.startswith("admin_reply:"))
 async def admin_reply_start(call: types.CallbackQuery):
@@ -177,11 +170,10 @@ async def admin_reply_start(call: types.CallbackQuery):
     await bot.send_message(
         ADMIN_ID,
         f"🔁 Режим ответа включён для ID <code>{target_id}</code>.\n"
-        f"Отправляй СООБЩЕНИЯ (текст/фото/видео/док/голос/стикер) — я буду пересылать их пользователю.\n"
-        f"Когда закончишь — напиши /done (или /cancel), чтобы выйти из режима."
+        f"Отправляй СООБЩЕНИЯ (текст/фото/видео/док/голос/стикер) — я буду копировать их пользователю.\n"
+        f"Завершить — /done (или /cancel)."
     )
 
-# ЛОВИМ ЛЮБОЙ ТИП КОНТЕНТА в режиме ответа и копируем как есть (медиа + подпись)
 @dp.message_handler(
     lambda m: (
         m.from_user.id == ADMIN_ID
@@ -198,6 +190,7 @@ async def admin_send_reply(message: types.Message):
     if not target:
         return
     try:
+        # копируем сообщение «как есть» вместе с подписью (если есть)
         await bot.copy_message(
             chat_id=target,
             from_chat_id=message.chat.id,
@@ -244,13 +237,11 @@ async def admin_set_target(message: types.Message):
     admin_state[ADMIN_ID] = {"reply_to": target_id}
     await message.answer(
         f"🔁 Режим ответа включён для ID <code>{target_id}</code>.\n"
-        f"Отправляй сообщения (любой тип) — я буду пересылать их пользователю.\n"
+        f"Отправляй сообщения (любой тип) — я буду копировать их пользователю.\n"
         f"Завершить — /done"
     )
 
 if __name__ == "__main__":
-    # поднимаем мини-веб и будильник, затем запускаем бота
-    threading.Thread(target=run_flask, daemon=True).start()
+    # Будильник — опционально, не мешает
     threading.Thread(target=keep_awake, daemon=True).start()
     executor.start_polling(dp, skip_updates=True)
-
