@@ -10,8 +10,8 @@ from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.utils import executor
 
 # === НАСТРОЙКИ ===
-API_TOKEN = os.getenv("BOT_TOKEN")               # ❗ добавь BOT_TOKEN в Render → Environment
-CHANNEL   = os.getenv("CHANNEL") or "@slavicruna"  # можно и числовой ID вида -100...
+API_TOKEN = os.getenv("BOT_TOKEN")                 # BOT_TOKEN задаёшь в Render → Environment
+CHANNEL   = os.getenv("CHANNEL") or "@slavicruna"  # или числовой ID вида -100...
 ADMIN_ID  = int(os.getenv("ADMIN_ID") or 8218520444)
 # ==================
 
@@ -19,20 +19,20 @@ logging.basicConfig(level=logging.INFO)
 log = logging.getLogger(__name__)
 
 if not API_TOKEN:
-    raise RuntimeError("Переменная окружения BOT_TOKEN не задана!")
+    raise RuntimeError("❌ Переменная окружения BOT_TOKEN не задана!")
 
 bot = Bot(token=API_TOKEN, parse_mode=types.ParseMode.HTML)
 dp  = Dispatcher(bot)
 
-# Память состояний (в RAM процесса)
-user_state = {}   # user_id -> "waiting_date" | {"date": "...", "step": "waiting_name", "name": "..."}
+# Память состояний (внутри процесса)
+user_state = {}   # user_id -> состояния
 admin_state = {}  # ADMIN_ID -> {"reply_to": user_id}
 
 # ---- Будильник: пингуем внешний URL (если задан) раз в 10 минут ----
 def keep_awake():
-    url = os.environ.get("RENDER_EXTERNAL_URL")  # Render задаёт это для Web Service
+    url = os.environ.get("RENDER_EXTERNAL_URL")
     if not url:
-        log.info("RENDER_EXTERNAL_URL не задан — будильник пропускаем.")
+        log.info("RENDER_EXTERNAL_URL не задан — будильник не нужен.")
         return
     while True:
         try:
@@ -43,6 +43,7 @@ def keep_awake():
         time.sleep(600)  # 10 минут
 # --------------------------------------------------------------------
 
+# ==== Кнопки ====
 def gate_kb() -> InlineKeyboardMarkup:
     kb = InlineKeyboardMarkup(row_width=1)
     kb.add(
@@ -61,7 +62,9 @@ def admin_reply_kb(user_id: int) -> InlineKeyboardMarkup:
         InlineKeyboardButton("Ответить", callback_data=f"admin_reply:{user_id}"),
         InlineKeyboardButton("Открыть чат", url=f"tg://user?id={user_id}"),
     )
+# =================
 
+# ==== Хэндлеры пользователя ====
 @dp.message_handler(commands=["start"])
 async def start_cmd(message: types.Message):
     await message.answer(
@@ -153,9 +156,9 @@ async def confirm_data(call: types.CallbackQuery):
             log.warning(f"Cannot send to admin: {e}")
 
     user_state.pop(uid, None)
+# ==============================
 
-# ===== РЕЖИМ ОТВЕТА АДМИНА (пересылка любого контента) =====
-
+# ==== РЕЖИМ ОТВЕТА АДМИНА ====
 @dp.callback_query_handler(lambda c: c.data.startswith("admin_reply:"))
 async def admin_reply_start(call: types.CallbackQuery):
     if call.from_user.id != ADMIN_ID:
@@ -190,7 +193,6 @@ async def admin_send_reply(message: types.Message):
     if not target:
         return
     try:
-        # копируем сообщение «как есть» вместе с подписью (если есть)
         await bot.copy_message(
             chat_id=target,
             from_chat_id=message.chat.id,
@@ -240,8 +242,8 @@ async def admin_set_target(message: types.Message):
         f"Отправляй сообщения (любой тип) — я буду копировать их пользователю.\n"
         f"Завершить — /done"
     )
+# =================================
 
 if __name__ == "__main__":
-    # Будильник — опционально, не мешает
     threading.Thread(target=keep_awake, daemon=True).start()
     executor.start_polling(dp, skip_updates=True)
