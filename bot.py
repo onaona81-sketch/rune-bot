@@ -1,4 +1,4 @@
-# bot.py — FSM: подписка → дата → имя → уведомление админа → ответы админа (текст/медиа)
+# bot.py — подписка → дата → имя → уведомление админа → ответы админа (текст/медиа)
 import os
 import re
 import time
@@ -13,11 +13,11 @@ from aiogram.dispatcher import FSMContext
 from aiogram.utils import executor
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
-# === НАСТРОЙКИ ИЗ ENV ===
-API_TOKEN = os.getenv("BOT_TOKEN")                     # <-- в Render: BOT_TOKEN
-CHANNEL   = os.getenv("CHANNEL") or "@slavicruna"      # <-- в Render: CHANNEL
-ADMIN_ID  = int(os.getenv("ADMIN_ID") or 8218520444)   # <-- в Render: ADMIN_ID
-# ========================
+# === НАСТРОЙКИ (через Render → Environment) ===
+API_TOKEN = os.getenv("BOT_TOKEN")                    # BOT_TOKEN
+CHANNEL   = os.getenv("CHANNEL") or "@slavicruna"     # CHANNEL
+ADMIN_ID  = int(os.getenv("ADMIN_ID") or 8218520444)  # ADMIN_ID
+# ===============================================
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger(__name__)
@@ -26,9 +26,9 @@ if not API_TOKEN:
     raise RuntimeError("❌ Переменная окружения BOT_TOKEN не задана!")
 
 bot = Bot(token=API_TOKEN, parse_mode=types.ParseMode.HTML)
-dp  = Dispatcher(bot, storage=MemoryStorage())  # FSM-память в RAM
+dp  = Dispatcher(bot, storage=MemoryStorage())  # FSM в памяти процесса
 
-# ---- Будильник: мягкий самопинг внешнего URL раз в 10 минут (для Web Service) ----
+# ===== Будильник: мягкий самопинг внешнего URL раз в 10 минут (для Web Service) =====
 def keep_awake():
     url = os.environ.get("RENDER_EXTERNAL_URL")
     if not url:
@@ -41,17 +41,17 @@ def keep_awake():
         except Exception as e:
             log.warning(f"Ping failed: {e}")
         time.sleep(600)
-# -------------------------------------------------------------------------------
+# =====================================================================================
 
-# ==== FSM ====
+# ===== FSM =====
 class Form(StatesGroup):
     waiting_date = State()
     waiting_name = State()
 
-# Анти-дребезг по кнопке «Подписался»: не чаще, чем раз в 2 секунды
-last_click_at = {}  # user_id -> ts
+# Анти-дребезг по «Подписался»
+_last_click = {}  # user_id -> timestamp
 
-# ==== Кнопки ====
+# ===== Кнопки =====
 def gate_kb() -> InlineKeyboardMarkup:
     kb = InlineKeyboardMarkup(row_width=1)
     kb.add(
@@ -71,10 +71,10 @@ def admin_reply_kb(user_id: int) -> InlineKeyboardMarkup:
         InlineKeyboardButton("Открыть чат", url=f"tg://user?id={user_id}"),
     )
 
-# ==== Команды ====
+# ===== Команды =====
 @dp.message_handler(commands=["start"])
 async def start_cmd(message: types.Message, state: FSMContext):
-    # Сбрасываем старое состояние и начинаем заново
+    # Полный сброс шага/данных, чтобы «/start» не попадало в имя
     await state.finish()
     await message.answer(
         "Привет! 🌿 Чтобы получить руну, подпишитесь на наш канал:\n"
@@ -86,46 +86,37 @@ async def start_cmd(message: types.Message, state: FSMContext):
 @dp.message_handler(commands=["reset"])
 async def reset_cmd(message: types.Message, state: FSMContext):
     await state.finish()
-    await message.answer("🔄 Сбросила шаги. Нажмите /start и начнём заново.")
+    await message.answer("🔄 Сбросила состояние. Нажмите «Подписался» ещё раз.", reply_markup=gate_kb())
 
-# ==== Проверка подписки ====
+# ===== Подписка и шаги =====
 @dp.callback_query_handler(lambda c: c.data == "check_sub")
 async def check_sub(call: types.CallbackQuery, state: FSMContext):
     uid = call.from_user.id
-
-    # Анти-дребезг: игнорим частые повторные нажатия
+    # анти-дребезг (2 сек)
     now = time.time()
-    if now - last_click_at.get(uid, 0) < 2.0:
-        await call.answer("Подождите чуть-чуть…", show_alert=False)
+    if now - _last_click.get(uid, 0) < 2:
+        try:
+            await call.answer("Минутку…", show_alert=False)
+        except:  # noqa
+            pass
         return
-    last_click_at[uid] = now
-
-    # Если пользователь уже в процессе — не сбиваем шаг
-    cur_state = await state.get_state()
-    if cur_state == Form.waiting_name.state:
-        await call.answer("Вы уже ввели дату. Сейчас ждём имя.", show_alert=True)
-        return
+    _last_click[uid] = now
 
     try:
         member = await bot.get_chat_member(chat_id=CHANNEL, user_id=uid)
         if member.status in ("member", "administrator", "creator"):
-            # Даём ровно ОДИН раз переход в шаг даты, если не в процессе
-            if cur_state != Form.waiting_date.state:
-                await Form.waiting_date.set()
-                try:
-                    await call.message.edit_reply_markup()  # уберём кнопки
-                except Exception:
-                    pass
-                await bot.send_message(uid, "Введите вашу дату рождения (например: 05.11.1992) ⤵️")
-            else:
-                await call.answer("Уже ждём дату рождения 👇", show_alert=False)
+            await Form.waiting_date.set()
+            try:
+                await call.message.edit_reply_markup()
+            except:  # noqa
+                pass
+            await bot.send_message(uid, "Введите вашу дату рождения (например: 05.11.1992) ⤵️")
         else:
             await call.answer("Похоже, подписки ещё нет 🙈", show_alert=True)
     except Exception as e:
         log.warning(f"get_chat_member error: {e}")
         await call.answer("Не удалось проверить подписку, попробуйте ещё раз.", show_alert=True)
 
-# ==== Шаг 1: Дата ====
 @dp.message_handler(state=Form.waiting_date, content_types=types.ContentTypes.TEXT)
 async def get_date(message: types.Message, state: FSMContext):
     date_text = (message.text or "").strip()
@@ -136,70 +127,84 @@ async def get_date(message: types.Message, state: FSMContext):
     await Form.waiting_name.set()
     await message.answer("Отлично 🌿 Теперь введите ваше имя ⤵️")
 
-# ==== Шаг 2: Имя ====
 @dp.message_handler(state=Form.waiting_name, content_types=types.ContentTypes.TEXT)
 async def get_name(message: types.Message, state: FSMContext):
     name = (message.text or "").strip()
+
+    # 1) Не позволяем использовать команды как имя
+    if name.startswith("/"):
+        await message.answer("Пожалуйста, напишите имя обычным текстом, без команд 🙂")
+        return
+
+    # 2) Простая проверка имени (буквы/пробел/дефис, 2–40 символов)
     if not (2 <= len(name) <= 40):
         await message.answer("Имя должно быть длиной 2–40 символов. Попробуйте ещё раз 🙂")
         return
-    data = await state.get_data()
-    date_text = data.get("date", "—")
-    await state.update_data(name=name)
+    if not re.fullmatch(r"[A-Za-zА-Яа-яЁёІіЇїЄєҐґ\- ]{2,40}", name):
+        await message.answer("Имя должно содержать только буквы, пробелы и дефис. Попробуйте ещё раз 🙂")
+        return
 
+    await state.update_data(name=name)
+    data = await state.get_data()
     await message.answer(
         "Проверьте данные:\n"
-        f"📅 Дата: <b>{date_text}</b>\n"
-        f"👤 Имя: <b>{name}</b>\n\n"
+        f"📅 Дата: <b>{data['date']}</b>\n"
+        f"👤 Имя: <b>{data['name']}</b>\n\n"
         "Если всё верно — нажмите кнопку ниже 👇",
         reply_markup=confirm_kb(),
     )
 
-# ==== Подтверждение ====
-@dp.callback_query_handler(lambda c: c.data == "confirm_data", state="*")
+# подтверждение БЕЗ привязки к текущему state: берём то, что накопили в FSM
+@dp.callback_query_handler(lambda c: c.data == "confirm_data")
 async def confirm_data(call: types.CallbackQuery, state: FSMContext):
     uid = call.from_user.id
-    cur_state = await state.get_state()
-    if cur_state != Form.waiting_name.state:
-        await call.answer("Нет данных для подтверждения. Нажмите /start", show_alert=True)
-        return
-
     data = await state.get_data()
-    date_text = data.get("date", "—")
-    name_text = data.get("name", "—")
+
+    date = data.get("date")
+    name = data.get("name")
+
+    if not date or not name:
+        # Данные потерялись — просим начать заново
+        try:
+            await call.message.edit_reply_markup()
+        except:  # noqa
+            pass
+        await state.finish()
+        await bot.send_message(uid, "Не нашла данные заявки. Нажмите /start и пройдите шаги заново 🙏")
+        return
 
     try:
         await call.message.edit_reply_markup()
-    except Exception:
+    except:  # noqa
         pass
 
-    # Пользователю
+    # Сообщение пользователю
     await bot.send_message(
         uid,
         "Спасибо 🌿 Мы приняли вашу дату рождения и имя.\n"
         "Так как всё обрабатывается вручную, нужно немного подождать 🙌",
     )
 
-    # Админу
+    # Уведомление админу
     if ADMIN_ID:
         u = call.from_user
         text = (
             "🆕 <b>Новая заявка</b>\n"
             f"👤 Пользователь: <b>{u.full_name}</b> (@{u.username})\n"
             f"🆔 ID: <code>{uid}</code>\n"
-            f"📅 Дата: <b>{date_text}</b>\n"
-            f"📛 Имя: <b>{name_text}</b>"
+            f"📅 Дата: <b>{date}</b>\n"
+            f"📛 Имя: <b>{name}</b>"
         )
         try:
             await bot.send_message(ADMIN_ID, text, reply_markup=admin_reply_kb(uid))
         except Exception as e:
             log.warning(f"Cannot send to admin: {e}")
 
-    await state.finish()  # очищаем шаги
+    # Чистим состояние
+    await state.finish()
 
-# ===== РЕЖИМ ОТВЕТА АДМИНА (копируем любой контент) =====
-
-admin_session = {}  # ADMIN_ID -> {"reply_to": user_id}
+# ===== РЕЖИМ ОТВЕТА АДМИНА (копируем любой контент пользователю) =====
+admin_mode = {}  # admin_id -> {"reply_to": user_id}
 
 @dp.callback_query_handler(lambda c: c.data.startswith("admin_reply:"))
 async def admin_reply_start(call: types.CallbackQuery):
@@ -207,22 +212,22 @@ async def admin_reply_start(call: types.CallbackQuery):
         await call.answer("Нет прав.", show_alert=True)
         return
     target_id = int(call.data.split(":")[1])
-    admin_session[ADMIN_ID] = {"reply_to": target_id}
+    admin_mode[ADMIN_ID] = {"reply_to": target_id}
     try:
         await call.message.edit_reply_markup()
-    except Exception:
+    except:  # noqa
         pass
     await bot.send_message(
         ADMIN_ID,
         f"🔁 Режим ответа включён для ID <code>{target_id}</code>.\n"
-        f"Отправляй СООБЩЕНИЯ (текст/фото/видео/док/голос/стикер) — я буду копировать их пользователю.\n"
+        f"Отправляй сообщения (текст/фото/видео/док/голос/стикер) — я буду копировать их пользователю.\n"
         f"Завершить — /done (или /cancel)."
     )
 
 @dp.message_handler(
     lambda m: (
         m.from_user.id == ADMIN_ID
-        and ADMIN_ID in admin_session
+        and ADMIN_ID in admin_mode
         and not (m.text and (m.text.startswith("/done")
                              or m.text.startswith("/cancel")
                              or m.text.startswith("/reply")
@@ -231,7 +236,7 @@ async def admin_reply_start(call: types.CallbackQuery):
     content_types=types.ContentTypes.ANY
 )
 async def admin_send_reply(message: types.Message):
-    target = admin_session.get(ADMIN_ID, {}).get("reply_to")
+    target = admin_mode.get(ADMIN_ID, {}).get("reply_to")
     if not target:
         return
     try:
@@ -246,7 +251,7 @@ async def admin_send_reply(message: types.Message):
 
 @dp.message_handler(lambda m: m.from_user.id == ADMIN_ID and m.text and (m.text.startswith("/done") or m.text.startswith("/cancel")))
 async def admin_finish_reply(message: types.Message):
-    admin_session.pop(ADMIN_ID, None)
+    admin_mode.pop(ADMIN_ID, None)
     await message.answer("🚫 Режим ответа выключен.")
 
 @dp.message_handler(lambda m: m.from_user.id == ADMIN_ID and m.text and m.text.startswith("/reply"))
@@ -278,15 +283,15 @@ async def admin_set_target(message: types.Message):
     except ValueError:
         await message.answer("user_id должен быть числом.")
         return
-    admin_session[ADMIN_ID] = {"reply_to": target_id}
+    admin_mode[ADMIN_ID] = {"reply_to": target_id}
     await message.answer(
         f"🔁 Режим ответа включён для ID <code>{target_id}</code>.\n"
         f"Отправляй сообщения (любой тип) — я буду копировать их пользователю.\n"
         f"Завершить — /done"
     )
 
-# ==== MAIN ====
 if __name__ == "__main__":
-    # Будильник — опционально (для Web Service)
+    # Будильник не мешает, можно оставить
     threading.Thread(target=keep_awake, daemon=True).start()
     executor.start_polling(dp, skip_updates=True)
+
