@@ -10,7 +10,7 @@ from aiogram.dispatcher import FSMContext
 from aiogram.utils import executor
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
-# Константы
+# Настройки окружения
 API_TOKEN = os.getenv("BOT_TOKEN")          # Токен бота
 CHANNEL   = os.getenv("CHANNEL") or "@yourchannel"
 ADMIN_ID  = int(os.getenv("ADMIN_ID") or 1234567890)
@@ -39,7 +39,7 @@ def keep_awake():
             log.warning(f"Ошибка пинга: {e}")
         time.sleep(600)
 
-# FSM состояния
+# Классы FSM (Finite State Machine)
 from aiogram.dispatcher.filters.state import State, StatesGroup
 
 class Form(StatesGroup):
@@ -111,4 +111,3 @@ async def get_name(message: types.Message, state: FSMContext):
 if __name__ == "__main__":
     threading.Thread(target=keep_awake, daemon=True).start()
     executor.start_polling(dp, skip_updates=True)
-    
