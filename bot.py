@@ -11,10 +11,10 @@ from aiogram.utils import executor
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 # Настройки окружения
-API_TOKEN = os.getenv("BOT_TOKEN")          # Токен бота
-CHANNEL   = os.getenv("CHANNEL") or "@yourchannel"
-ADMIN_ID  = int(os.getenv("ADMIN_ID") or 1234567890)
-OFFERTA_LINK = "https://drive.google.com/file/d/1td5YQZLRFUPdrKd9b5MTsDyjerOMXEXe/preview"
+API_TOKEN = os.getenv("BOT_TOKEN")                  # Токен бота
+CHANNEL   = os.getenv("CHANNEL") or "@yourchannel"  # Название канала
+ADMIN_ID  = int(os.getenv("ADMIN_ID") or 1234567890)  # Админский ID
+OFFERTA_LINK = "https://drive.google.com/file/d/1td5YQZLRFUPdrKd9b5MTsDyjerOMXEXe/preview"  # Ссылка на оферту
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger(__name__)
@@ -55,14 +55,15 @@ def gate_kb() -> InlineKeyboardMarkup:
     )
     return kb
 
-# Основное приветствие
+# Главное приветствие
 @dp.message_handler(commands=["start"])
 async def start_cmd(message: types.Message):
     await message.answer(
         "Привет! 🌿 Чтобы получить руну, подпишись на наш канал:\n"
         f"{CHANNEL}\n\n"
+        "Рекомендуем ознакомиться с нашей офертой: <a href='{OFFERTA_LINK}'>посмотреть оферту</a>.\n"
         "После подписки нажми кнопку 👇 «Подписался».",
-        reply_markup=gate_kb(),
+        reply_markup=gate_kb(), disable_web_page_preview=True
     )
 
 # Проверка подписки
@@ -101,11 +102,26 @@ async def get_name(message: types.Message, state: FSMContext):
     await state.update_data(name=name)
     data = await state.get_data()
     await state.finish()
+    
+    # Формируем сообщение для пользователя
     await message.answer(
         "Ваша заявка у меня! Спасибо-спасибо! 🤍😊\n"
         "Я всё проверяю лично и вручную (я одна, но очень стараюсь!), так что небольшая пауза неизбежна.\n"
         "Вы все очень важны! Я обязательно с вами свяжусь! Ожидайте! 💫",
     )
+
+    # Формируем уведомление администратору
+    text = (
+        "🆕 Новая заявка!\n"
+        f"👤 Пользователь: <b>{message.from_user.full_name}</b> (@{message.from_user.username})\n"
+        f"🆔 ID: <code>{message.from_user.id}</code>\n"
+        f"📅 Дата рождения: <b>{data['date']}</b>\n"
+        f"📛 Имя: <b>{data['name']}</b>"
+    )
+    try:
+        await bot.send_message(ADMIN_ID, text)
+    except Exception as e:
+        log.error(f"Ошибка отправки уведомления администратору: {e}")
 
 # Основной цикл
 if __name__ == "__main__":
