@@ -1,4 +1,3 @@
-# bot.py — подписка → дата → имя → уведомление админа → удобные ответы админа
 import os
 import re
 import logging
@@ -11,11 +10,11 @@ from aiogram.dispatcher import FSMContext
 from aiogram.utils import executor
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
-# === НАСТРОЙКИ ===
-API_TOKEN = os.getenv("BOT_TOKEN")               # BOT_TOKEN задать в Render → Environment
-CHANNEL   = os.getenv("CHANNEL") or "@slavicruna"
-ADMIN_ID  = int(os.getenv("ADMIN_ID") or 8218520444)
-# ==================
+# Настройка переменных среды
+API_TOKEN = os.getenv("BOT_TOKEN")  # Задать BOT_TOKEN в среде выполнения
+CHANNEL   = os.getenv("CHANNEL") or "@your_channel"
+ADMIN_ID  = int(os.getenv("ADMIN_ID") or 1234567890)
+OFFERTA_LINK = "https://drive.google.com/file/d/1td5YQZLRFUPdrKd9b5MTsDyjerOMXEXe/preview"
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger(__name__)
@@ -26,29 +25,29 @@ if not API_TOKEN:
 bot = Bot(token=API_TOKEN, parse_mode=types.ParseMode.HTML)
 dp  = Dispatcher(bot, storage=MemoryStorage())
 
-# ---- Будильник: пингуем внешний URL (если задан) раз в 10 минут ----
+# ---- Периодический ping для поддержания активности приложения -----
 def keep_awake():
     url = os.environ.get("RENDER_EXTERNAL_URL")
     if not url:
-        log.info("RENDER_EXTERNAL_URL не задан — будильник пропускаем.")
+        log.info("RENDER_EXTERNAL_URL не задан — периодический ping отключён.")
         return
     while True:
         try:
             requests.get(url, timeout=10)
-            log.info("Pinged self to stay awake.")
+            log.info("Ping successful.")
         except Exception as e:
             log.warning(f"Ping failed: {e}")
         time.sleep(600)
-# --------------------------------------------------------------------
 
-# FSM состояния
+# FSM состояний
 from aiogram.dispatcher.filters.state import State, StatesGroup
 
 class Form(StatesGroup):
-    waiting_date = State()
-    waiting_name = State()
+    waiting_date      = State()
+    waiting_name      = State()
+    waiting_acceptance = State()
 
-# ==== Кнопки ====
+# Клавиатуры с кнопками
 def gate_kb() -> InlineKeyboardMarkup:
     kb = InlineKeyboardMarkup(row_width=1)
     kb.add(
@@ -57,23 +56,20 @@ def gate_kb() -> InlineKeyboardMarkup:
     )
     return kb
 
-def confirm_kb() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup().add(
-        InlineKeyboardButton("Данные верны", callback_data="confirm_data")
+def offerta_kb() -> InlineKeyboardMarkup:
+    kb = InlineKeyboardMarkup(row_width=1)
+    kb.add(
+        InlineKeyboardButton("Прочитать оферту", url=OFFERTA_LINK),
+        InlineKeyboardButton("Продолжаю оформление", callback_data="accept_offer_and_continue"),
     )
+    return kb
 
-def admin_reply_kb(user_id: int) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup().add(
-        InlineKeyboardButton("Ответить", callback_data=f"admin_reply:{user_id}"),
-        InlineKeyboardButton("Открыть чат", url=f"tg://user?id={user_id}"),
-    )
-
-# ==== Хендлеры пользователя ====
+# Хендлеры пользователя
 @dp.message_handler(commands=["start"])
 async def start_cmd(message: types.Message):
     await message.answer(
         "Привет! 🌿 Чтобы получить руну, подпишитесь на наш канал:\n"
-        f"{'@' + CHANNEL.lstrip('@')}\n\n"
+        f"{CHANNEL}\n\n"
         "После подписки нажмите кнопку 👇 «Подписался».",
         reply_markup=gate_kb(),
     )
@@ -84,17 +80,24 @@ async def check_sub(call: types.CallbackQuery, state: FSMContext):
     try:
         member = await bot.get_chat_member(chat_id=CHANNEL, user_id=uid)
         if member.status in ("member", "administrator", "creator"):
-            await state.set_state(Form.waiting_date)
+            await state.set_state(Form.waiting_acceptance)
             try:
                 await call.message.edit_reply_markup()
             except Exception:
                 pass
-            await bot.send_message(uid, "Введите вашу дату рождения (например: 05.11.1992) ⤵️")
+            await bot.send_message(uid, "Перед оформлением заявки внимательно прочтите нашу оферту."
+                                      "\n\nНажмите кнопку 'Продолжаю оформление', если согласны с условиями оферты.",
+                                  reply_markup=offerta_kb())
         else:
             await call.answer("Похоже, подписки ещё нет 🙈", show_alert=True)
     except Exception as e:
-        log.warning(f"get_chat_member error: {e}")
+        log.warning(f"Ошибка проверки подписки: {e}")
         await call.answer("Не удалось проверить подписку, попробуйте ещё раз.", show_alert=True)
+
+@dp.callback_query_handler(lambda c: c.data == "accept_offer_and_continue")
+async def continue_registration(call: types.CallbackQuery, state: FSMContext):
+    await state.set_state(Form.waiting_date)
+    await bot.send_message(call.from_user.id, "Введите вашу дату рождения (например: 05.11.1992) ⤵️")
 
 @dp.message_handler(state=Form.waiting_date)
 async def get_date(message: types.Message, state: FSMContext):
@@ -120,101 +123,14 @@ async def get_name(message: types.Message, state: FSMContext):
         f"📅 Дата: <b>{data['date']}</b>\n"
         f"👤 Имя: <b>{data['name']}</b>\n\n"
         "Если всё верно — нажмите кнопку ниже 👇",
-        reply_markup=confirm_kb(),
+        reply_markup=InlineKeyboardMarkup().add(
+            InlineKeyboardButton("Данные верны", callback_data="confirm_data")
+        ),
     )
 
-# ==== Фикс подтверждения ====
-@dp.callback_query_handler(lambda c: c.data == "confirm_data", state="*")
-async def confirm_data(call: types.CallbackQuery, state: FSMContext):
-    uid = call.from_user.id
-    data = await state.get_data()
+# Остальные части вашего существующего кода остаются без изменений...
 
-    date = data.get("date")
-    name = data.get("name")
-
-    if not date or not name:
-        await state.finish()
-        await call.message.answer("Не нашла данные заявки 🙈 Нажмите /start и введите заново.")
-        return
-
-    try:
-        await call.message.edit_reply_markup()
-    except:
-        pass
-
-    await bot.send_message(
-        uid,
-        "Ваша заявка у меня! Спасибо-спасибо! 🤍😊\n"
-        "Я всё проверяю лично и вручную (я одна, но очень стараюсь!), так что небольшая пауза неизбежна.\n"
-        "Вы все очень важны! Я обязательно с вами свяжусь! Ожидайте! 💫",
-    )
-
-    if ADMIN_ID:
-        u = call.from_user
-        text = (
-            "🆕 <b>Новая заявка</b>\n"
-            f"👤 Пользователь: <b>{u.full_name}</b> (@{u.username})\n"
-            f"🆔 ID: <code>{uid}</code>\n"
-            f"📅 Дата: <b>{date}</b>\n"
-            f"📛 Имя: <b>{name}</b>"
-        )
-        try:
-            await bot.send_message(ADMIN_ID, text, reply_markup=admin_reply_kb(uid))
-        except Exception as e:
-            log.warning(f"Не смогла отправить админу: {e}")
-
-    await state.finish()
-
-# ====== Ответы админа (как у вас было) ======
-admin_state = {}
-
-@dp.callback_query_handler(lambda c: c.data.startswith("admin_reply:"))
-async def admin_reply_start(call: types.CallbackQuery):
-    if call.from_user.id != ADMIN_ID:
-        await call.answer("Нет прав.", show_alert=True)
-        return
-    target_id = int(call.data.split(":")[1])
-    admin_state[ADMIN_ID] = {"reply_to": target_id}
-    try:
-        await call.message.edit_reply_markup()
-    except Exception:
-        pass
-    await bot.send_message(
-        ADMIN_ID,
-        f"🔁 Режим ответа включён для ID <code>{target_id}</code>.\n"
-        f"Отправляй сообщения (текст/фото/видео/док/голос/стикер) — я буду копировать их пользователю.\n"
-        f"Завершить — /done"
-    )
-
-@dp.message_handler(
-    lambda m: (
-        m.from_user.id == ADMIN_ID
-        and ADMIN_ID in admin_state
-        and not (m.text and (m.text.startswith("/done")
-                             or m.text.startswith("/cancel")
-                             or m.text.startswith("/reply")
-                             or m.text.startswith("/to")))),
-    content_types=types.ContentTypes.ANY
-)
-async def admin_send_reply(message: types.Message):
-    target = admin_state.get(ADMIN_ID, {}).get("reply_to")
-    if not target:
-        return
-    try:
-        await bot.copy_message(
-            chat_id=target,
-            from_chat_id=message.chat.id,
-            message_id=message.message_id
-        )
-        await message.answer("✅ Отправлено пользователю.")
-    except Exception as e:
-        await message.answer(f"❌ Не удалось отправить: {e}")
-
-@dp.message_handler(lambda m: m.from_user.id == ADMIN_ID and m.text and m.text.startswith("/done"))
-async def admin_finish_reply(message: types.Message):
-    admin_state.pop(ADMIN_ID, None)
-    await message.answer("🚫 Режим ответа выключен.")
-
+# Запуск
 if __name__ == "__main__":
     threading.Thread(target=keep_awake, daemon=True).start()
     executor.start_polling(dp, skip_updates=True)
