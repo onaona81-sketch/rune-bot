@@ -13,8 +13,8 @@ from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 # Настройки окружения
 API_TOKEN = os.getenv("BOT_TOKEN")                  # Токен бота
 CHANNEL   = os.getenv("CHANNEL") or "@yourchannel"  # Название канала
-ADMIN_ID  = int(os.getenv("ADMIN_ID") or 1234567890)  # Администраторский ID
-OFFERTA_LINK = "https://drive.google.com/file/d/1td5YQZLRFUPdrKd9b5MTsDyjerOMXEXe/preview"  # Ссылка на оферту
+ADMIN_ID  = int(os.getenv("ADMIN_ID") or 1234567890)  # Админский ID
+OFFERTA_LINK = "https://drive.google.com/drive/folders/1riLdwBUyPCWS8-9vUlSnnqU-DaJz-BxR?usp=sharing"  # Новая ссылка на папку с офертой
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger(__name__)
@@ -46,28 +46,28 @@ class Form(StatesGroup):
     waiting_date = State()       # Ждем дату рождения
     waiting_name = State()       # Ждем имя пользователя
 
-# Кнопки для открытия канала и подтверждения подписки
-def gate_kb() -> InlineKeyboardMarkup:
+# Кнопки для ознакомления с офертой и продолжения регистрации
+def initial_kb() -> InlineKeyboardMarkup:
     kb = InlineKeyboardMarkup(row_width=1)
     kb.add(
-        InlineKeyboardButton("Открыть канал", url=f"https://t.me/{CHANNEL.lstrip('@')}"),
-        InlineKeyboardButton("Подписался", callback_data="check_sub"),
+        InlineKeyboardButton("Познакомиться с офертой", url=OFFERTA_LINK),
+        InlineKeyboardButton("Продолжить оформление", callback_data="continue_registration"),
     )
     return kb
 
-# Приветствие и первая встреча с пользователем
+# Главное приветствие
 @dp.message_handler(commands=["start"])
 async def start_cmd(message: types.Message):
     await message.answer(
         "Привет! 🌿 Чтобы получить руну, подпишись на наш канал:\n"
         f"{CHANNEL}\n\n"
-        "Рекомендуем ознакомиться с нашей офертой (<a href='{OFFERTA_LINK}'>здесь</a>).\n"
-        "После подписки нажми кнопку 👇 «Подписался».",
-        reply_markup=gate_kb(), disable_web_page_preview=True
+        "Рекомендуем ознакомиться с нашей офертой.\n"
+        "После подписки нажми кнопку 👇 «Продолжить оформление».",
+        reply_markup=initial_kb(), disable_web_page_preview=True
     )
 
 # Проверка подписки
-@dp.callback_query_handler(lambda c: c.data == "check_sub")
+@dp.callback_query_handler(lambda c: c.data == "continue_registration")
 async def check_sub(call: types.CallbackQuery, state: FSMContext):
     uid = call.from_user.id
     try:
