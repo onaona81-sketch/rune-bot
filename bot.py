@@ -46,12 +46,12 @@ class Form(StatesGroup):
     waiting_date = State()       # Ждем дату рождения
     waiting_name = State()       # Ждем имя пользователя
 
-# Кнопки для открытия канала и подтверждения подписки
-def gate_kb() -> InlineKeyboardMarkup:
+# Кнопки для ознакомления с офертой и продолжения регистрации
+def initial_kb() -> InlineKeyboardMarkup:
     kb = InlineKeyboardMarkup(row_width=1)
     kb.add(
-        InlineKeyboardButton("Открыть канал", url=f"https://t.me/{CHANNEL.lstrip('@')}"),
-        InlineKeyboardButton("Подписался", callback_data="check_sub"),
+        InlineKeyboardButton("Познакомиться с офертой", url=OFFERTA_LINK),
+        InlineKeyboardButton("Продолжить оформление", callback_data="continue_registration"),
     )
     return kb
 
@@ -61,13 +61,13 @@ async def start_cmd(message: types.Message):
     await message.answer(
         "Привет! 🌿 Чтобы получить руну, подпишись на наш канал:\n"
         f"{CHANNEL}\n\n"
-        "Рекомендуем ознакомиться с нашей офертой: <a href='{OFFERTA_LINK}'>посмотреть оферту</a>.\n"
-        "После подписки нажми кнопку 👇 «Подписался».",
-        reply_markup=gate_kb(), disable_web_page_preview=True
+        "Рекомендуем ознакомиться с нашей офертой.\n"
+        "После подписки нажми кнопку 👇 «Продолжить оформление».",
+        reply_markup=initial_kb(), disable_web_page_preview=True
     )
 
 # Проверка подписки
-@dp.callback_query_handler(lambda c: c.data == "check_sub")
+@dp.callback_query_handler(lambda c: c.data == "continue_registration")
 async def check_sub(call: types.CallbackQuery, state: FSMContext):
     uid = call.from_user.id
     try:
